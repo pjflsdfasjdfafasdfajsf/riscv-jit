@@ -1,4 +1,5 @@
 demonstrates the GDB remote debugger
+
 run `zig build run` to start the host and then in another terminal:
 
 ```sh
