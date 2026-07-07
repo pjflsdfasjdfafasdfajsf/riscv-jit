@@ -1,0 +1,20 @@
+.{
+    .name = .gdb_demo,
+    .version = "0.0.0",
+
+    .fingerprint = 0xc88ce8cab8bec224,
+
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .riscv = .{
+            // this is just because our examples are stored in the repo!
+            // you would have url and hash here, see README.md in project
+            // root
+            .path = "../..",
+        },
+    },
+
+    .paths = .{
+        "",
+    },
+}

@@ -1,0 +1,21 @@
+.{
+    .name = .riscv_jit,
+    .version = "0.0.0",
+
+    .fingerprint = 0xe7f3d28933687cea,
+
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .riscv_arch_test = .{
+            .url = "https://github.com/riscv/riscv-arch-test/archive/refs/tags/4.0.0.tar.gz",
+            .hash = "N-V-__8AANcqgyckIyg3euWQCm0E6LuQIl8NMe8J31ZPFSo_",
+            .lazy = true,
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

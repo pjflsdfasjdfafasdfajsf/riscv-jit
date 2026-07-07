@@ -1,0 +1,25 @@
+.{
+    .name = .simple_raylib_game,
+    .version = "0.0.0",
+
+    .fingerprint = 0x3bfba71957184f96,
+
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .riscv = .{
+            // this is just because our examples are stored in the repo!
+            // you would have url and hash here, see README.md in project
+            // root
+            .path = "../..",
+        },
+
+        .raylib = .{
+            .url = "git+https://github.com/raysan5/raylib.git#3d640698d83ee1f1bb32981c8018019b63330bca",
+            .hash = "raylib-6.0.0-whq8uLZ-MAX0mp0aWStSk_hbG2HWc6bDK_SlwMUkRdhK",
+        },
+    },
+
+    .paths = .{
+        "", // not something that you should fetch
+    },
+}
