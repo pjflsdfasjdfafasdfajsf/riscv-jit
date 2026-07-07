@@ -15,6 +15,6 @@
     },
 
     .paths = .{
-        "",
+        "", // not something that you should fetch
     },
 }
