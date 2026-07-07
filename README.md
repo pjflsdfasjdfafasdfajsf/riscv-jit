@@ -3,7 +3,7 @@ for game dev purposes
 
 this project supports the zig build system:
 ```sh
-zig fetch --save <TODO>
+zig fetch --save https://github.com/pjflsdfasjdfafasdfajsf/riscv-jit/archive/refs/tags/1.0.0.zip
 ```
 then, in your `build.zig`:
 ```zig
