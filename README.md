@@ -10,7 +10,7 @@ then, in your `build.zig`:
 
 // - - - snip - - -
 
-const riscv_dep = b.dependency("riscv", .{
+const riscv_dep = b.dependency("riscv_jit", .{
     .target = target,
     .optimize = optimize,
 });
