@@ -24,6 +24,16 @@ typedef struct {
     uint64_t       text_addr;
     uint64_t       text_size;
 
+    // writable data region, gathered from all SHF_ALLOC|SHF_WRITE sections.
+    //
+    // unlike text_data (which aliases the mapped ELF and is read-only), this
+    // is a private and MUTABLE copy the guest can load from and store to
+    //
+    // always owned/freed by the riscv_elf!
+    uint8_t *data_mem;
+    uint64_t data_addr;
+    uint64_t data_size;
+
     const uint8_t *symtab;
     size_t         symtab_size;
     const char    *strtab;
@@ -68,6 +78,10 @@ typedef uint16_t Elf64_Section;
 
 #define EM_RISCV   243
 #define SHT_SYMTAB 2
+#define SHT_NOBITS 8
+
+#define SHF_WRITE 0x1
+#define SHF_ALLOC 0x2
 
 #define ELF64_ST_TYPE(info) ((info) & 0xF)
 #define STT_FUNC            2

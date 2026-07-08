@@ -56,6 +56,8 @@
         nativeBuildInputs = [
           env.pkgs.clang-tools
           env.pkgs.gdb
+          # RISC-V Sail reference model
+          env.pkgs.sail-riscv
         ]
           ++ (with env.pkgs.pkgsCross.riscv64-embedded.buildPackages; [ binutils ])
           ++ packages.default.nativeBuildInputs

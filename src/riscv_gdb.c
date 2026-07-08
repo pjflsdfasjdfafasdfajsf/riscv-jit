@@ -372,6 +372,18 @@ static bool gdb_translate_guest(riscv_jit *jit, uint64_t addr, uint64_t len, uin
         return true;
     }
 
+    uint64_t data_start = jit->elf.data_addr;
+    uint64_t data_end   = data_start + jit->elf.data_size;
+    if (jit->elf.data_size != 0 && addr >= data_start && addr < data_end) {
+        if (len > data_end - addr) {
+            return false;
+        }
+
+        *out_ptr      = jit->elf.data_mem + (addr - data_start);
+        *out_writable = true;
+        return true;
+    }
+
     return false;
 }
 

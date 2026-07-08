@@ -39,6 +39,7 @@ typedef enum {
     X86_COND_AE = 3,
     X86_COND_E  = 4,
     X86_COND_NE = 5,
+    X86_COND_A  = 7,
     X86_COND_L  = 12,
     X86_COND_GE = 13,
     X86_COND_LE = 14,
@@ -639,6 +640,36 @@ static inline void x86_cg_emit_mem_access(riscv_jit *jit, x86_mem_access_type ac
     int fault_patches[3];
     int fault_patch_count  = 0;
     int text_success_patch = -1;
+    int data_success_patch = -1;
+
+    // there is one nice trick we can do -- since bounds are compile-time
+    // constants they can be encoded as immediates using RSI! which means
+    // that this avoids wasting a callee-saved register just to survive
+    // ecall calls
+    if (jit->elf.data_size != 0) {
+        uint64_t data_lo    = jit->elf.data_addr;
+        uint64_t data_hi    = jit->elf.data_addr + jit->elf.data_size - (uint64_t)access_size;
+        uint64_t host_delta = (uint64_t)(uintptr_t)jit->elf.data_mem - jit->elf.data_addr;
+
+        x86_cg_mov_r64_imm64(jit, X86_RSI, data_lo);
+        x86_cg_cmp_r64_r64(jit, X86_RCX, X86_RSI);
+        x86_cg_jcc_rel32(jit, X86_COND_B, 0);
+        int data_low_patch = (int)jit->code_size - X86_REL32_SIZE;
+
+        x86_cg_mov_r64_imm64(jit, X86_RSI, data_hi);
+        x86_cg_cmp_r64_r64(jit, X86_RCX, X86_RSI);
+        x86_cg_jcc_rel32(jit, X86_COND_A, 0);
+        int data_high_patch = (int)jit->code_size - X86_REL32_SIZE;
+
+        x86_cg_mov_r64_imm64(jit, X86_RSI, host_delta);
+        x86_cg_add_r64_r64(jit, X86_RCX, X86_RSI);
+        x86_cg_jmp_rel32(jit, 0);
+        data_success_patch = (int)jit->code_size - X86_REL32_SIZE;
+
+        int after_data_offset = (int)jit->code_size;
+        x86_cg_patch_rel32_local(jit, data_low_patch, after_data_offset);
+        x86_cg_patch_rel32_local(jit, data_high_patch, after_data_offset);
+    }
 
     if (access_type == X86_MEM_ACCESS_STORE) {
         x86_cg_jmp_rel32(jit, 0);
@@ -686,6 +717,9 @@ static inline void x86_cg_emit_mem_access(riscv_jit *jit, x86_mem_access_type ac
     if (text_success_patch >= 0) {
         x86_cg_patch_rel32_local(jit, text_success_patch, access_offset);
     }
+    if (data_success_patch >= 0) {
+        x86_cg_patch_rel32_local(jit, data_success_patch, access_offset);
+    }
     x86_cg_patch_rel32_local(jit, stack_access_patch, access_offset);
 
     if (access_type == X86_MEM_ACCESS_STORE) {
@@ -708,7 +742,7 @@ static inline void x86_cg_emit_fuel_check(riscv_jit *jit, uint64_t pc, int32_t f
 }
 
 #define X86_TRAMPOLINE_MAX_BYTES      160u
-#define X86_GUEST_INSTR_MAX_BYTES     128u
+#define X86_GUEST_INSTR_MAX_BYTES     224u
 #define X86_EPILOGUE_AND_PATCH_BYTES  256u
 #define RISCV_JALR_CLEAR_LOW_BIT_MASK ((int32_t)-2)
 

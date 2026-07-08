@@ -42,6 +42,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests against RISC-V arch tests");
     const riscv_arch_test = b.lazyDependency("riscv_arch_test", .{}) orelse return;
 
+    // pass 1 compiles a signature elf, runs it on sail and then dumps the signature
+    // region, the next pass recompiles the same test with the reference values baked
+    // in so that every RV_TEST_SIGUPD compares instead of stores
+
     const env = b.addWriteFiles();
     _ = env.add("rvtest_config.h",
         \\#ifndef _RVTEST_CONFIG_H_
@@ -52,22 +56,30 @@ pub fn build(b: *std.Build) void {
         \\#define XLEN 64
         \\#endif
     );
+    // macros for the self-checking elf
     _ = env.add("rvmodel_macros.h",
         \\#ifndef _RVMODEL_MACROS_H_
         \\#define _RVMODEL_MACROS_H_
+        \\
         \\#define RVMODEL_HALT_PASS li a7, 93; li a0, 0; ecall;
         \\#define RVMODEL_HALT_FAIL li a7, 93; li a0, 1; ecall;
+        \\
         \\#define RVMODEL_BOOT .global _start; _start:
         \\#define RVMODEL_DATA_SECTION .data
-        \\#define RVMODEL_DATA_BEGIN
-        \\#define RVMODEL_DATA_END
-        \\#define RVMODEL_IO_INIT
-        \\#define RVMODEL_IO_WRITE_STR(x, y, z)
-        \\#define RVMODEL_IO_ASSERT_GPR_EQ(x, y, z)
-        \\#define RVMODEL_SET_MSW_INT
-        \\#define RVMODEL_CLEAR_MSW_INT
-        \\#define RVMODEL_CLEAR_MTIMER_INT
-        \\#define RVMODEL_CLEAR_MEXT_INT
+        \\
+        \\#define RVMODEL_IO_INIT(_R1, _R2, _R3)
+        \\#define RVMODEL_IO_WRITE_STR(_R1, _R2, _R3, _STR_PTR)
+        \\
+        \\#define RVMODEL_INTERRUPT_LATENCY 10
+        \\#define RVMODEL_TIMER_INT_SOON_DELAY 100
+        \\#define RVMODEL_SET_MEXT_INT(_R1, _R2)
+        \\#define RVMODEL_CLR_MEXT_INT(_R1, _R2)
+        \\#define RVMODEL_SET_MSW_INT(_R1, _R2)
+        \\#define RVMODEL_CLR_MSW_INT(_R1, _R2)
+        \\#define RVMODEL_SET_SEXT_INT(_R1, _R2)
+        \\#define RVMODEL_CLR_SEXT_INT(_R1, _R2)
+        \\#define RVMODEL_SET_SSW_INT(_R1, _R2)
+        \\#define RVMODEL_CLR_SSW_INT(_R1, _R2)
         \\#endif
     );
     const link_ld = env.add("link.ld",
@@ -76,13 +88,16 @@ pub fn build(b: *std.Build) void {
         \\_start = rvtest_entry_point;
         \\SECTIONS {
         \\  . = 0x80000000;
-        \\ .text : {
-        \\   *(.text.init)
-        \\   *(.text.rvtest) *(.text.rvtest.*)
-        \\   *(.text.rvmodel) *(.text.rvmodel.*) *(.text) *(.text.*)
-        \\ }
-        \\  .data : { *(.data) }
-        \\  .bss : { *(.bss) }
+        \\  .data : { *(.data) *(.data.*) *(.sdata) *(.sdata.*) }
+        \\  . = ALIGN(0x1000);
+        \\  .text : {
+        \\    *(.text.init)
+        \\    *(.text.rvtest) *(.text.rvtest.*)
+        \\    *(.text.rvmodel) *(.text.rvmodel.*) *(.text) *(.text.*)
+        \\    *(.rodata) *(.rodata.*) *(.srodata) *(.srodata.*)
+        \\  }
+        \\  .tohost : { *(.tohost) }
+        \\  .bss : { *(.bss) *(.bss.*) *(.sbss) *(.sbss.*) }
         \\}
     );
 
@@ -102,9 +117,9 @@ pub fn build(b: *std.Build) void {
     test_runner.root_module.addIncludePath(b.path("src"));
     test_runner.root_module.linkLibrary(lib);
 
-    // TODO: tests currently don't actually validate the results, need to
-    // figure out how to do that
     const run_cmd = b.addRunArtifact(test_runner);
+    run_cmd.stdio = .inherit;
+
     test_step.dependOn(&run_cmd.step);
 
     // zig fmt: off
@@ -128,26 +143,62 @@ pub fn build(b: *std.Build) void {
     inline for (tests) |name| {
         @setEvalBranchQuota(10_000);
 
-        const elf = b.addExecutable(.{
-            .name = std.Io.Dir.path.basename(b.fmt(("{s}.elf"), .{name})),
+        const base = std.Io.Dir.path.basename(name);
 
-            .root_module = b.createModule(.{
-                .target = b.resolveTargetQuery(.{
-                    .cpu_arch = .riscv64,
-                    .os_tag = .freestanding,
-                    .abi = .none,
-                }),
-                .optimize = .Debug,
-            }),
-        });
-        elf.root_module.addAssemblyFile(riscv_arch_test.path(b.fmt("tests/rv64i/{s}.S", .{name})));
+        const sig_elf = archTestElf(b, riscv_arch_test, env, link_ld, name, base, .regular);
+        sig_elf.root_module.addCMacro("SIGNATURE", "");
 
-        elf.root_module.addIncludePath(riscv_arch_test.path("tests/env"));
-        elf.root_module.addIncludePath(riscv_arch_test.path("tests/rv64i/I"));
-        elf.root_module.addIncludePath(riscv_arch_test.path("tests/rv64i/M"));
-        elf.root_module.addIncludePath(env.getDirectory());
-        elf.setLinkerScript(link_ld);
+        const sail = b.addSystemCommand(&.{"sail_riscv_sim"});
+        sail.addArg("--test-signature");
+        const sig_file = sail.addOutputFileArg(b.fmt("{s}.sig", .{base}));
+        sail.addArgs(&.{ "--signature-granularity", "8" });
+        sail.addFileArg(sig_elf.getEmittedBin());
+        // sail spams stderr with its own progress which makes zig think that
+        // it failed and increases the spam even more
+        _ = sail.captureStdErr(.{});
+
+        const convert = b.addRunArtifact(test_runner);
+        convert.addArg("--convert-sig");
+        convert.addFileArg(sig_file);
+        const results = convert.addOutputFileArg("test.results");
+
+        const elf = archTestElf(b, riscv_arch_test, env, link_ld, name, base, .self_check);
+        elf.root_module.addCMacro("RVTEST_SELFCHECK", "");
+        elf.root_module.addIncludePath(results.dirname());
+        elf.root_module.addCMacro("SIGNATURE_FILE", "\"test.results\"");
 
         run_cmd.addArtifactArg(elf);
     }
+}
+
+fn archTestElf(
+    b: *std.Build,
+    riscv_arch_test: *std.Build.Dependency,
+    env: *std.Build.Step.WriteFile,
+    link_ld: std.Build.LazyPath,
+    name: []const u8,
+    base: []const u8,
+    mode: enum {regular, self_check},
+) *std.Build.Step.Compile {
+    const elf = b.addExecutable(.{
+        .name = if (mode == .self_check) base else b.fmt("{s}.sig", .{base}),
+
+        .root_module = b.createModule(.{
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .riscv64,
+                .os_tag = .freestanding,
+                .abi = .none,
+            }),
+            .optimize = .Debug,
+        }),
+    });
+    elf.root_module.addAssemblyFile(riscv_arch_test.path(b.fmt("tests/rv64i/{s}.S", .{name})));
+
+    elf.root_module.addIncludePath(riscv_arch_test.path("tests/env"));
+    elf.root_module.addIncludePath(riscv_arch_test.path("tests/rv64i/I"));
+    elf.root_module.addIncludePath(riscv_arch_test.path("tests/rv64i/M"));
+    elf.root_module.addIncludePath(env.getDirectory());
+    elf.setLinkerScript(link_ld);
+
+    return elf;
 }

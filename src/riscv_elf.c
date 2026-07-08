@@ -88,6 +88,71 @@ static riscv_result elf_find_sections(riscv_elf *elf, const Elf64_Ehdr *ehdr) {
     return elf->text_data ? RISCV_OK : RISCV_ELF_ERR_NO_TEXT;
 }
 
+// gathers every writable allocated section into a single private mutable
+// region spanning [min_addr, max_end)
+static riscv_result elf_build_data_region(riscv_elf *elf, const Elf64_Ehdr *ehdr) {
+    const uint8_t *data     = elf->data;
+    Elf64_Shdr    *sections = (Elf64_Shdr *)(data + ehdr->shoff);
+
+    const uint64_t writable_alloc = SHF_ALLOC | SHF_WRITE;
+
+    uint64_t lo    = UINT64_MAX;
+    uint64_t hi    = 0;
+    bool     found = false;
+
+    for (Elf64_Half i = 0; i < ehdr->shnum; i++) {
+        Elf64_Shdr *section = &sections[i];
+
+        if ((section->flags & writable_alloc) != writable_alloc || section->size == 0) {
+            continue;
+        }
+
+        if (section->addr < lo) {
+            lo = section->addr;
+        }
+        if (section->addr + section->size > hi) {
+            hi = section->addr + section->size;
+        }
+        found = true;
+    }
+
+    if (!found) {
+        return RISCV_OK;
+    }
+
+    uint64_t region_size = hi - lo;
+
+    uint8_t *region = calloc(1, region_size);
+    if (!region) {
+        return RISCV_JIT_ERR_OOM;
+    }
+
+    for (Elf64_Half i = 0; i < ehdr->shnum; i++) {
+        Elf64_Shdr *section = &sections[i];
+
+        if ((section->flags & writable_alloc) != writable_alloc || section->size == 0) {
+            continue;
+        }
+
+        if (section->type == SHT_NOBITS) {
+            continue;
+        }
+
+        if (!elf_section_fits(elf->size, section)) {
+            free(region);
+            return RISCV_ELF_ERR_OOB;
+        }
+
+        memcpy(region + (section->addr - lo), elf_section_data(data, section), section->size);
+    }
+
+    elf->data_mem  = region;
+    elf->data_addr = lo;
+    elf->data_size = region_size;
+
+    return RISCV_OK;
+}
+
 riscv_result riscv_elf_init_from_mem(riscv_elf *elf, const uint8_t *data, size_t size) {
     memset(elf, 0, sizeof(*elf));
 
@@ -118,7 +183,12 @@ riscv_result riscv_elf_init_from_mem(riscv_elf *elf, const uint8_t *data, size_t
         return RISCV_ELF_ERR_OOB;
     }
 
-    return elf_find_sections(elf, ehdr);
+    riscv_result result = elf_find_sections(elf, ehdr);
+    if (result != RISCV_OK) {
+        return result;
+    }
+
+    return elf_build_data_region(elf, ehdr);
 }
 
 riscv_result riscv_elf_init_from_file(riscv_elf *elf, const char *file) {
@@ -143,6 +213,7 @@ void riscv_elf_destroy(riscv_elf *elf) {
     if (elf->owned && elf->data) {
         free(elf->data);
     }
+    free(elf->data_mem);
     memset(elf, 0, sizeof(*elf));
 }
 
