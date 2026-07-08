@@ -5,3 +5,5 @@
 .zig-cache
 zig-out
 zig-pkg
+# nix build
+result
