@@ -1,5 +1,5 @@
 this is an extremely simple RISC-V JIT compiler written in C99
-for game dev purposes 
+for game dev purposes, released into public domain!
 
 this project supports the zig build system:
 ```sh
